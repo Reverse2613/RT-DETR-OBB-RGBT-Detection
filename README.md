@@ -1,2 +1,94 @@
-# RSVideo-demo
-This project is ready to test myself for remote sensing video object tracking, and dataset is OOTB. I download OOTB dataset from this website https://github.com/YZCU/OOTB. OOTB is publicly shared by other professionals.
+# experiments
+
+我已经从RiO-DETR里面抽取出来的最少最小可训练与测试的源代码，作为我本次自己的实验源代码仓库。
+
+## 关于实验代码细节的地方
+
+- 该加残差的加残差（网络不易过深）
+
+
+```
+运行训练命令
+CUDA_VISIBLE_DEVICES=0 torchrun \
+  --master_port=7001 \
+  --nproc_per_node=1 \
+  train.py \
+  -c configs/rtdetrv2_obb/rtdetrv2_obb_hgnetv2_s_dronevehicle_ir.yml \
+  --use-amp \
+  --seed=0
+
+
+python train.py -c configs/rtdetrv2_obb/rtdetrv2_obb_hgnetv2_s_atrumod_prototype.yml --use-amp
+
+```
+
+我记得，在检测头的旋转框，旋转可变形注意力计算采样时，源代码有误
+
+## 基线单模态热红外
+
+```
+python train.py -c configs/rtdetrv2_obb/rtdetrv2_obb_hgnetv2_s_atrumod_single_ir.yml --use-amp
+```
+
+best score：epoch20，mAP=0.44100
+
+## 基线拼接（S3、S4、S5）
+
+```
+python train.py -c configs/rtdetrv2_obb/rtdetrv2_obb_hgnetv2_s_atrumod_concat_baseline.yml --use-amp
+```
+
+best score：epoch22，mAP=0.53416
+
+## 基线直接相加（S3、S4、S5）
+
+```
+python train.py -c configs/rtdetrv2_obb/rtdetrv2_obb_hgnetv2_s_atrumod_add_baseline.yml --use-amp
+```
+
+best score：epoch20，mAP=0.54038
+
+## 模块一
+
+- rtdetrv2_obb_decoder.py（rtv4，因为原版代码有点错误，修改了可变形注意力时的旋转采样）
+- rtv4.py（rtv4，添加了透传训练时期的预测条件输出，为了送给criterion计算损失）
+- rtv4_obb_criterion.py（rtv4，添加了条件损失映射，并且计算6维条件损失）
+- dual_hgnetv2_lg_dense.py（backbone，模块一的网络结构代码,__init__.py也要同步导入）
+- atrumod_dataset.py（atr-umod数据集加载器代码）
+- profiler_utils.py（修改为了通过真实的配置文件中的输入尺寸分辨率来计算参数量、计算量等）
+- det_engine.py（修改了字典也可以直接搬运到GPU上去做运算，因为我们的6维条件是由字典保存的，为满足计算预测的6维条件损失所做的改进）
+- rtdetrv2_obb_hgnetv2_s_atrumod_prototype.yml（模块一的训练数据集、网络、损失等配置）
+- inspect_atrumod.py（atr-umod数据集的探针代码，查看xml真实标注的信息）
+
+best score：epoch23，mAP=0.52123
+
+热红外与可见光的融合就是通过条件预测的向量经过线性和激活输出了权重，通过加权求和的方式进行的融合，但是热红外与可见光并没有互动起来。
+也就是说，其实效果和基线肯定差不多。热红外与可见光的特征并没有互动起来。
+
+
+## 验证模块一（消融模块一引入的显示条件先验到底有无作用）
+
+```
+python train.py -c configs/rtdetrv2_obb/rtdetrv2_obb_hgnetv2_s_atrumod_self_driven.yml --use-amp
+
+```
+
+直接不实列化六个预测头，所以相当于没有显示条件损失的计算了
+
+best score：epoch17，mAP=0.51557
+
+所以这样引入显示条件先验失败了
+
+
+## InfraNet：
+
+- qual_gate.py(质量感知融合模块，__init__)
+- dual_hgnetv2_infranet.py(整个Infranet融合的backbone骨架，__init__.py也要同步导入)
+- rtv4_infranet.py(__init__，专门为infranet而写的整个框架组装代码)
+- rtv4_obb_criterion_infranet.py(__init__，专门为infranet而写的损失计算代码)
+- rtdetrv2_obb_hgnetv2_s_atrumod_infranet.yml
+
+```
+python train.py -c configs/rtdetrv2_obb/rtdetrv2_obb_hgnetv2_s_atrumod_infranet.yml
+
+```
