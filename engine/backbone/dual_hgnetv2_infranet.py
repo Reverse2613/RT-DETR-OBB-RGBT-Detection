@@ -112,6 +112,7 @@ class DualHGNetv2_InfraNet(nn.Module):
         )
 
         # 针对 B0 规格的标准输出通道: [S3=256, S4=512, S5=1024]
+        # 接口固定取三层以及这些通道，不能只改 name 就任意切换 HGNetv2 规格。
         self.stage_channels: List[int] = [256, 512, 1024]
         c3, c4, c5 = self.stage_channels
 
@@ -202,6 +203,8 @@ class DualHGNetv2_InfraNet(nn.Module):
 
         # (3) 融合节点 2 (Site 4, Stride 16): 下采样后注入 [C4, C5]
         a3_down = self.downsample_1(a3)
+        # 第二、三级的 a_in 已混入 IR，所以 q4/q5 是混合表示的门控代理，
+        # 不能未经校准直接解释为原始 RGB 图像质量。
         a4, q4 = self.qual_gate_2(a_in=a3_down, c_list=[c4, c5])
 
         # (4) 融合节点 3 (Site 5, Stride 32): 下采样后注入 [C5]
@@ -219,6 +222,8 @@ class DualHGNetv2_InfraNet(nn.Module):
         # ======================================================================
         # 5. 训练期: 返回双流特征与质量评分，供多损失联合优化
         # ======================================================================
+        # quality_scores 供观察；现有 InfraNet criterion 不单独监督 q。
+        # eval_mode='ir' 只跳过辅助路径执行，模块仍在模型中，不是物理删除。
         quality_scores = {"q3": q3, "q4": q4, "q5": q5}
         return {
             "feats_main": feats_ir,

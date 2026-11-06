@@ -30,6 +30,8 @@ class ConditionPerceiver(nn.Module):
         self.with_aux_heads = with_aux_heads  # <--- 开关显示条件预测标志，为了查看显示条件约束是否起了作用
 
         # 全局上下文特征映射: 输入拼接后的 [B, 2*C]
+        # z_cond 是 cond_dim=256 的隐向量，不是直接输入六个 GT 条件的向量。
+        # 六类辅助任务只在训练期约束该表示；推理仍从图像特征计算 z_cond。
         self.encoder = nn.Sequential(
             nn.Linear(in_channels * 2, cond_dim),
             nn.LayerNorm(cond_dim),
@@ -74,6 +76,8 @@ class ConditionPerceiver(nn.Module):
         preds: Optional[Dict[str, torch.Tensor]] = None
 
         # 仅在开启开关且处于训练模式时，才输出预测字典
+        # with_aux_heads=False 仅移除监督头，不移除共享 encoder 和门控路径。
+        # 六组预测的输出维度合计 32，条件 GT 从 target 字典进入 criterion。
         if self.with_aux_heads and self.training:
             preds = {
                 "pred_height": self.head_height(z_cond),
@@ -140,6 +144,7 @@ class LocalGlobalGatedDenseFusionBlock(nn.Module):
             z_cond (torch.Tensor): 宏观环境潜向量 [B, cond_dim]
         """
         # A. 提取局部空间照度可靠性图 M_local ∈ [B, 1, H, W]
+        # 这是从 RGB 特征学习的可靠性代理，不是经标定的真实照度测量。
         m_local = self.local_photometric_extractor(f_rgb)
 
         # B. 计算宏观通道信噪比门控因子 w_rgb, w_ir ∈ [B, C, 1, 1]
@@ -150,6 +155,9 @@ class LocalGlobalGatedDenseFusionBlock(nn.Module):
         r_rgb_spatial = m_local * w_rgb # [B, C, H, W]
 
         # D. 全量稠密注入: 红外主干加权基底 + 双阶门控可见光补偿
+        # 两路通过 z_cond 间接耦合，但此处没有跨模态注意力或位置对应采样。
+        # w_ir 也会衰减 IR，fusion_out 不含原始 IR 的恒等旁路；不能据此
+        # 保证融合至少不差于单 IR。完整 3x3 卷积还是主要额外计算来源。
         f_injected = (w_ir * f_ir) + (r_rgb_spatial * self.conv_align(f_rgb))
 
         return self.fusion_out(f_injected)
@@ -228,6 +236,8 @@ class DualHGNetv2_LGDense(nn.Module):
 
         # 1. 在 S3 阶段感知环境宏观潜向量与预测头
         z_cond, cond_preds = self.condition_perceiver(feats_ir[0], feats_rgb[0])
+        # 每次前向覆写此临时属性；RTv4 训练时将它装入 outputs['cond_preds']。
+        # eval 时 preds=None，但条件 encoder、局部图和全局门控仍然执行。
         self.latest_cond_preds = cond_preds
 
         # 2. 逐尺度执行局部-全局双阶门控稠密融合

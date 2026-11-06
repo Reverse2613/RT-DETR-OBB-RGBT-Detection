@@ -16,6 +16,9 @@ __all__ = ['RTv4', ]
 class RTv4(nn.Module):
     __inject__ = ['backbone', 'encoder', 'decoder', ]
 
+    # 检测器容器本身不实现融合：backbone 产三尺度特征，encoder 产金字塔，
+    # decoder 产预测字典。默认 OBB 实验并未配置视觉基础模型教师。
+
     def __init__(self, \
         backbone: nn.Module,
         encoder: nn.Module,
@@ -27,6 +30,7 @@ class RTv4(nn.Module):
         self.encoder = encoder
 
     def forward(self, x, targets=None, teacher_encoder_output=None):
+        # targets 只在训练中供 denoising/损失使用；推理不需要 GT 框或 GT 条件。
         x_backbone = self.backbone(x)  # [S3, S4, S5] features from backbone
 
         encoder_output = self.encoder(x_backbone)
@@ -48,6 +52,8 @@ class RTv4(nn.Module):
         # ======================================================================
         # 【新增】：透传主干网络条件自感知头的训练期预测输出，供 Criterion 算损失
         # ======================================================================
+        # 条件监督闭环：LGDense 临时属性 -> 输出字典 -> criterion.loss_conditions。
+        # 普通 Add/Concat/IR 无此属性，self-driven 下属性值为 None。
         if self.training and hasattr(self.backbone, "latest_cond_preds"):
             x_decoder_out["cond_preds"] = self.backbone.latest_cond_preds
 

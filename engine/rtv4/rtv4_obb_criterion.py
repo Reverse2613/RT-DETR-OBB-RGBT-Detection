@@ -32,6 +32,9 @@ class RTv4OBBCriterion(nn.Module):
     __share__ = ['num_classes', ]
     __inject__ = ['matcher', ]
 
+    # 输出已按 weight_dict 加权，det_engine 直接 sum(loss_dict.values())。
+    # 当前支持 focal/l1/kld/cond；不会因为 YAML 写入 saliency/distill 就自动实现。
+
     def __init__(self, \
                  matcher,
                  weight_dict,
@@ -87,6 +90,8 @@ class RTv4OBBCriterion(nn.Module):
         target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         losses = {}
+        # 这里实际对完整五维框求 L1（含 angle/pi），不是上方历史说明中的四维。
+        # theta 接近 0 和 pi 时物理方向接近，但标量 L1 仍会给很大角度惩罚。
         loss_l1 = F.l1_loss(src_boxes, target_boxes, reduction='none')
         losses['loss_l1'] = loss_l1.sum() / num_boxes
 
@@ -130,6 +135,8 @@ class RTv4OBBCriterion(nn.Module):
 
     def _get_go_indices(self, indices, indices_aux_list):
         """Get a matching union set across all decoder layers. """
+        # 按各层匹配出现次数给每个预测 query 选一个 GT；同一 GT 可对应多个 query。
+        # 这是跨层回归监督的并集，不等于再做一次全局一对一 Hungarian 匹配。
         results = []
         for indices_aux in indices_aux_list:
             indices = [(torch.cat([idx1[0], idx2[0]]), torch.cat([idx1[1], idx2[1]]))
@@ -185,6 +192,8 @@ class RTv4OBBCriterion(nn.Module):
         loss_l = F.cross_entropy(cond_preds["pred_location"], gt_loc)
 
         # 4. 加权汇总 (连续量与离散量归一化平衡)
+        # 先在条件任务内部给分类项乘 0.5，外层再乘 YAML 的 loss_cond 权重。
+        # 此监督按图聚合，与目标数量/Hungarian 分配无关；未实现缺失标签掩码。
         total_cond_loss = (loss_h + loss_a + loss_t) * 1.0 + (loss_w + loss_i + loss_l) * 0.5
 
         return {"loss_cond": total_cond_loss}
@@ -207,12 +216,16 @@ class RTv4OBBCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
+        # 最终层先匹配，再缓存中间层/encoder 匹配。use_uni_set 仅作用于
+        # l1/kld 的回归监督，focal 分类仍用各层自己的匹配。
         outputs_without_aux = {k: v for k, v in outputs.items() if 'aux' not in k}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)['indices']
 
         # Get the matching union set across all decoder layers.
+        # 当前训练实现要求 aux_outputs 存在；关闭 decoder.aux_loss 不只是省计算，
+        # 还会触发下方 assert，需要先验证 criterion 接口。
         if 'aux_outputs' in outputs:
             indices_aux_list, cached_indices, cached_indices_enc = [], [], []
             aux_outputs_list = outputs['aux_outputs']
@@ -340,6 +353,7 @@ class RTv4OBBCriterion(nn.Module):
                     losses.update(l_dict)
 
         # For debugging Objects365 pre-train.
+        # NaN 被替换为零，可能掩盖局部损失异常；训练总损失有限不是无数值问题的证明。
         losses = {k: torch.nan_to_num(v, nan=0.0) for k, v in losses.items()}
         return losses
 

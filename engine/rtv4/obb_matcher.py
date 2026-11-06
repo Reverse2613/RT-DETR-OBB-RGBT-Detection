@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt
 
 @register()
 class HungarianMatcherOBB(nn.Module):
+    # 无梯度地计算预测与 GT 的组合代价，送 CPU scipy 求一对一最优匹配。
+    # 训练代价不是最终评估的旋转 IoU；历史 cost_giou 名称实际对应 KLD。
     """This class computes an assignment between the targets and the predictions of the network
 
     For efficiency reasons, the targets don't include the no_object. Because of this, in general,
@@ -95,10 +97,13 @@ class HungarianMatcherOBB(nn.Module):
         else:
             cost_class = -out_prob[:, tgt_ids]
 
+        # L1 在五维归一化参数上计算，包含非周期的角度差；当前配置此项权重为 0。
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
         out_bbox_ex = out_bbox.unsqueeze(1).expand(-1, len(tgt_bbox), -1)
         tgt_bbox_ex = tgt_bbox.unsqueeze(0).expand(len(out_bbox), -1, -1)
 
+        # KLD/四角 Hausdorff 均直接解释输入的几何，矩形归一化度量问题也会
+        # 影响匹配，不能只核查 decoder 采样而忽略此处（见 README 审查部分）。
         cost_gd = kld_loss(out_bbox_ex, tgt_bbox_ex, fun='log1p', tau=1.0, sqrt=False)
 
         C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_gd

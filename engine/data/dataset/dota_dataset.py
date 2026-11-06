@@ -13,6 +13,9 @@ from ...core import register
 class DOTADataset(DetDataset):
     __inject__ = ['transforms']
 
+    # 单图 DOTA TXT 适配器：四点像素框经 minAreaRect 转成长边定义 OBB。
+    # 初始 angle_norm=angle_deg/180；成对 DroneVehicle 使用文件后半部分的独立类。
+
     CLASSES = ('plane', 'baseball-diamond', 'bridge', 'ground-track-field', 'small-vehicle',
                'large-vehicle', 'ship', 'tennis-court', 'basketball-court', 'storage-tank',
                'soccer-ball-field', 'roundabout', 'harbor', 'swimming-pool', 'helicopter')
@@ -233,6 +236,8 @@ class DroneVehiclePairDataset(DetDataset):
         self.max_retry: int = max_retry
 
         # 规则化推导对应的可见光 (RGB) 图像目录
+        # trainimgr -> trainimg，只按目录名去掉最后的 r；两路要求同名样本。
+        # Windows 建议用正斜杠且不要保留末尾反斜杠，当前仅 rstrip('/')。
         clean_ir_path: str = self.img_folder_ir.rstrip("/")
         if clean_ir_path.endswith("r"):
             self.img_folder_rgb: str = clean_ir_path[:-1]
@@ -316,6 +321,7 @@ class DroneVehiclePairDataset(DetDataset):
         img_rgb: Image.Image = Image.open(rgb_path).convert("RGB")
 
         # 几何尺寸安全对齐防御
+        # RGB resize 到 IR 尺寸不估计视差/标定参数，配准正确性需另行检查。
         if img_ir.size != img_rgb.size:
             logger.warning(
                 f"样本 {img_id} 尺寸不一致: IR={img_ir.size}, RGB={img_rgb.size}. 强制以 IR 尺寸重采样对齐!"
@@ -335,6 +341,7 @@ class DroneVehiclePairDataset(DetDataset):
 
     def __getitem__(self, idx: int):
         for attempt in range(self.max_retry):
+            # 重采样返回新 idx 的 image_id；验证发生此分支会导致重复/漏评样本。
             try:
                 paired_imgs, target = self._load_single_pair(idx)
 
@@ -377,6 +384,8 @@ class DroneVehiclePairDataset(DetDataset):
                     if len(parts) < 9:
                         continue
 
+                    # 第十列 difficulty 在当前加载器中未转为 ignore 标志。
+                    # 官方协议若区分困难目标，需先核对评估口径再比较分数。
                     category = parts[8]
                     if category not in self.category2label:
                         continue

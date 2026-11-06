@@ -187,6 +187,8 @@ def deformable_attention_core_func_v2(\
             # n * m, seq, n, 2
             sampling_coord = (sampling_grid_l * torch.tensor([[w, h]], device=value_l.device) + 0.5).to(torch.int64)
 
+            # 离散分支把 x/y 都限制为 h-1，W!=H 时不是正确的逐轴边界。
+            # 现有主配置使用 default 双线性采样，没有走此分支。
             # FIX ME? for rectangle input
             sampling_coord = sampling_coord.clamp(0, h - 1)
             sampling_coord = sampling_coord.reshape(bs * n_head, Len_q * num_points_list[level], 2)

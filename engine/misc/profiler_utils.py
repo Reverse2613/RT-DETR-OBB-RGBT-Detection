@@ -27,6 +27,8 @@ def stats(
         input_shape = (1, 3, base_size, base_size)
 
     # 3. 统计部署态 FLOPs
+    # deploy 将模型置 eval 并执行可重参数化转换，统计的是推理路径而非训练双流。
+    # 三通道 dummy 会由双流主干复制为六通道；这只用于算量，不检验模态真实性。
     model_for_info = copy.deepcopy(cfg.model).deploy()
 
     flops, macs, _ = calculate_flops(
@@ -36,6 +38,9 @@ def stats(
         output_precision=4,
         print_detailed=False,
     )
+    # InfraNet 的 IR 模式只是旁路 RGB，不删除辅助模块，所以此总参数量
+    # 仍包含未执行的 RGB/QualGate 参数，不能直接当作裁剪后的部署体积。
+    # calflops 对 grid_sample/einsum 等算子的计数口径需确认，FLOPs 不是实测 FPS。
     params = sum(p.numel() for p in model_for_info.parameters())
     del model_for_info
 

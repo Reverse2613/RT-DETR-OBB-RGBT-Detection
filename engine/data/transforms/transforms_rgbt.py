@@ -25,6 +25,9 @@ from .transforms_obb import (
 )
 from ._transforms import ConvertPILImage, RandomPhotometricDistort
 
+# 该文件的随机几何参数必须由两模态共用；只对 RGB 做光度扰动。
+# 推荐顺序：几何增强 -> Resize -> Sanitize -> 6 通道 Tensor -> 框归一化。
+
 
 @register()
 class PairedResizeOBB(T.Transform):
@@ -167,6 +170,8 @@ class PairedConvertPILToTensor(T.Transform):
         tensor_rgb = self.converter(paired_imgs["rgb"])
 
         # 沿通道维度拼接为 [6, H, W]
+        # 通道顺序严格为 IR 0:3、RGB 3:6；灰度 IR 转 RGB 是三通道表示，
+        # 不代表获得三个独立热波段，也不等价于绝对温度标定。
         tensor_6ch = torch.cat([tensor_ir, tensor_rgb], dim=0)
 
         return (tensor_6ch, target) + extra_args
@@ -295,6 +300,8 @@ class PairedMosaicOBB(T.Transform):
                 combined_boxes.append(boxes_i)
                 combined_labels.append(tgt_i["labels"])
 
+        # 只显式合并 boxes/labels；其他字段沿用首图。
+        # 若扩展到带 conditions 的 ATR Mosaic，首图条件不代表四图合成场景。
         merged_target = target0.copy()
         if len(combined_boxes) > 0:
             merged_target["boxes"] = torch.cat(combined_boxes, dim=0)
@@ -396,6 +403,8 @@ class PairedRandomZoomOutOBB(T.Transform):
 
 @register()
 class PairedRandomIoUCropOBB(T.Transform):
+    # 当前按中心是否在裁剪窗口内保留框，没有执行 sampler_options 的 IoU 阈值。
+    # 截断框只平移中心，不重算可见多边形；名称中的 IoU 不代表已实现精确约束。
     # 物理意义：模拟无人机低空、大目标截断场景。
     # IR 与 RGB 共用同一裁剪窗口，仅保留中心落在窗口内的旋转框并平移，
     # 经 obb2poly/poly2obb 保角重算，避免单模态各自裁剪导致的模态错位。

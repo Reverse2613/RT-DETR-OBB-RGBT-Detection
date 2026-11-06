@@ -93,6 +93,9 @@ class PostProcessor(nn.Module):
 class PostProcessorOBB(nn.Module):
     __share__ = ['num_classes', 'num_top_queries']
 
+    # 将归一化五维预测还原为原图像素 cx/cy/w/h 和弧度 theta。
+    # 展平 query*class 后选 top-k，允许同一 query 以不同类别进入结果；本类不做 NMS。
+
     def __init__(self, num_classes=80, num_top_queries=300, input_shape=None) -> None:
         super().__init__()
         self.num_top_queries = num_top_queries
@@ -102,6 +105,9 @@ class PostProcessorOBB(nn.Module):
 
     def forward(self, outputs, orig_target_sizes: torch.Tensor):
         logits, boxes = outputs['pred_logits'], outputs['pred_boxes']
+        # 已知输入画布时按 min(Wt/Wo,Ht/Ho) 撤销等比缩放，假设 padding 在右/下。
+        # 当前 ATR 原尺寸与输入画布一致，Drone 验证使用等比缩放+右下补边。
+        # 若改成非等比 Resize 或居中 padding，不能只改 input_shape 就正确还原。
         if self.input_shape is not None:
             target_h, target_w = self.input_shape
             h = orig_target_sizes[:, 0]
@@ -123,6 +129,7 @@ class PostProcessorOBB(nn.Module):
             boxes_angle = boxes[..., 4:] * 3.141592653589793
             bbox_pred = torch.cat([boxes_xywh, boxes_angle], dim=-1)
 
+        # 分数阈值只用于其他可视化，不在此处过滤评估结果。
         scores = F.sigmoid(logits)
         scores, index = torch.topk(scores.flatten(1), self.num_top_queries, dim=-1)
 

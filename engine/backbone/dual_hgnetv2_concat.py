@@ -90,6 +90,7 @@ class DualHGNetv2_Concat(nn.Module):
         )
 
         # 3. 针对 B0 规格的各阶段输出通道定义: [S3=256, S4=512, S5=1024]
+        # 当前融合层按 B0/B1 的通道设置固定；切换规格或 return_idx 需重核契约。
         self.stage_channels: List[int] = [256, 512, 1024]
 
         # 4. 构建三组 1x1 卷积融合降维层: 将 2*C 降维回原版 C
@@ -125,6 +126,8 @@ class DualHGNetv2_Concat(nn.Module):
 
         # 在各尺度上执行通道拼接与线性降维
         fused_features: List[torch.Tensor] = []
+        # Concat+1x1 已能学习两路通道混合，但没有显式的跨位置内容对应。
+        # 额外 BN/SiLU 也意味着它并非纯线性拼接，与 Add 的参数预算不同。
         for i, (f_ir, f_rgb) in enumerate(zip(feats_ir, feats_rgb)):
             # 1. 沿通道维度拼接: [B, C, H_i, W_i] + [B, C, H_i, W_i] -> [B, 2*C, H_i, W_i]
             concat_f = torch.cat([f_ir, f_rgb], dim=1)

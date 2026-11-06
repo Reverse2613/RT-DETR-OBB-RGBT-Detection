@@ -37,6 +37,9 @@ __all__ = [
 class DataLoader(data.DataLoader):
     __inject__ = ['dataset', 'collate_fn']
 
+    # 将 epoch 同时传给 dataset 的增强策略和 collate 的多尺度/MixUp 策略。
+    # 这里的 shuffle 属性记录意图，实际采样还取决于 DataLoader/DDP sampler。
+
     def __repr__(self) -> str:
         format_string = self.__class__.__name__ + "("
         for n in ['dataset', 'batch_size', 'num_workers', 'drop_last', 'collate_fn']:
@@ -93,6 +96,8 @@ def generate_scales(base_size, base_size_repeat):
 
 @register()
 class BatchImageCollateFunction(BaseCollateFunction):
+    # 输入逐图 (Tensor,target)，输出 [B,C,H,W] 和未堆叠的 target 字典列表。
+    # ATR 的 C=6，base_size_repeat=None 禁用随机多尺度，保留 512x640 矩形。
     def __init__(
         self,
         stop_epoch=None,
@@ -122,6 +127,8 @@ class BatchImageCollateFunction(BaseCollateFunction):
         # self.interpolation = interpolation
 
     def apply_mixup(self, images, targets):
+        # 当前实验 mixup_prob=0；此通用实现只合并框/标签等，不重建 conditions。
+        # OBB criterion 也未使用 mixup 权重，不能直接开启后仍视作同一监督协议。
         """
         Applies Mixup augmentation to the batch if conditions are met.
 
@@ -191,6 +198,8 @@ class BatchImageCollateFunction(BaseCollateFunction):
             # VF.resize(inpt, sz, interpolation=self.interpolation)
 
             sz = random.choice(self.scales)
+            # int size 会同时改高宽为 sz；对矩形 OBB 属各向异性变换。
+            # 当前没有同步重算角度/长短边，ATR 配置因此明确关闭此分支。
             images = F.interpolate(images, size=sz)
             if 'masks' in targets[0]:
                 for tg in targets:

@@ -17,6 +17,8 @@ def get_contrastive_denoising_training_group_obb(targets,
     if num_denoising <= 0:
         return None, None, None, None
 
+    # 先按 batch 最大 GT 数 padding，再复制成正/负组。
+    # num_denoising 是组数预算，不是严格固定的 DN query 总数。
     num_gts = [len(t['labels']) for t in targets]
     device = targets[0]['labels'].device
 
@@ -72,6 +74,7 @@ def get_contrastive_denoising_training_group_obb(targets,
 
         # Prepare noise scaling vector: [w, h, w, h, 0]
         # input_query_bbox is (cx, cy, w, h, angle)
+        # 当前只扰动中心和宽高，角度噪声恒为零；不能据此声称已训练角度去噪。
         wh = input_query_bbox[..., 2:4]
         zeros = torch.zeros_like(wh[..., :1])
         noise_scale_vector = torch.cat([wh, wh, zeros], dim=-1)
@@ -98,6 +101,7 @@ def get_contrastive_denoising_training_group_obb(targets,
     tgt_size = num_denoising + num_queries
     attn_mask = torch.full([tgt_size, tgt_size], False, dtype=torch.bool, device=device)
     # match query cannot see the reconstruction
+    # 防止普通检测 query 从含 GT 信息的重建 query 泄露答案；推理无需此分支。
     attn_mask[num_denoising:, :num_denoising] = True
 
     # reconstruct cannot see each other

@@ -32,6 +32,9 @@ class RTv4OBBCriterion_Infranet(nn.Module):
     __share__ = ['num_classes', ]
     __inject__ = ['matcher', ]
 
+    # 与普通 OBB criterion 的核心匹配/损失相同；forward 为两条完整检测路径
+    # 分别计算，再汇总 main + 0.25*aux。不是直接回归 quality_scores。
+
     def __init__(self, \
                  matcher,
                  weight_dict,
@@ -210,6 +213,8 @@ class RTv4OBBCriterion_Infranet(nn.Module):
         # ======================================================================
         # 1. 计算主分支损失 (Main Stream Loss, 权重 1.0)
         # ======================================================================
+        # 主路径为纯 IR，辅助路径为 QualGate 融合；两路使用相同 GT，分别匹配。
+        # 排除容器字段，避免把嵌套预测误传给普通单路损失流程。
         outputs_main = {k: v for k, v in outputs.items() if k not in ['aux_infranet', 'quality_scores']}
         losses_main = self._compute_single_branch_losses(outputs_main, targets, **kwargs)
 
@@ -221,6 +226,8 @@ class RTv4OBBCriterion_Infranet(nn.Module):
             losses_aux = self._compute_single_branch_losses(outputs_aux, targets, **kwargs)
 
             # 按原论文公式: L = L_main + 0.25 * L_aux 进行加权聚合
+            # 权重是代码内常量，不是可直接用 YAML 改动的构造参数。
+            # aux 内部的 decoder/encoder/DN 各项损失也会一起乘此系数。
             w_aux = 0.25
             for k, v in losses_aux.items():
                 losses_main[f'{k}_aux_infranet'] = v * w_aux
@@ -228,6 +235,8 @@ class RTv4OBBCriterion_Infranet(nn.Module):
         return losses_main
 
     def _compute_single_branch_losses(self, outputs, targets, **kwargs):
+        # 保留独立单路监督：focal 分类、五维 L1、Gaussian KLD、跨层并集及 DN。
+        # 其矩形度量、角度周期、NaN 清零等限制与普通 OBB criterion 相同。
         """底层的单分支完整损失计算逻辑 (原 forward 中的全部内容)."""
         outputs_without_aux = {k: v for k, v in outputs.items() if 'aux' not in k}
 

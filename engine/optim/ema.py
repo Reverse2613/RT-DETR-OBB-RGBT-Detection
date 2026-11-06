@@ -33,6 +33,7 @@ class ModelEMA(object):
     def __init__(self, model: nn.Module, decay: float=0.9999, warmups: int=1000, start: int=0):
         super().__init__()
 
+        # EMA 是独立 eval 副本，无梯度优化；验证/最佳权重选择优先使用它。
         self.module = deepcopy(dist_utils.de_parallel(model)).eval()
         # if next(model.parameters()).device.type != 'cpu':
         #     self.module.half()  # FP16 EMA
@@ -42,6 +43,8 @@ class ModelEMA(object):
         self.before_start = 0
         self.start = start
         self.updates = 0  # number of EMA updates
+        # decay_fn 捕获构造参数 decay，而非读取 self.decay；之后仅修改
+        # self.decay 不会改变此 lambda 的实际更新系数，第二阶段实验需注意。
         if warmups == 0:
             self.decay_fn = lambda x: decay
         else:

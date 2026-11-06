@@ -24,6 +24,8 @@ from ..misc import dist_utils # Assuming remove_module_prefix is there, or defin
 
 
 class YAMLConfig(BaseConfig):
+    # 属性首次访问时才实例化并缓存组件，避免测试阶段创建无关的训练对象。
+    # global_cfg 合并注册模式；yaml_cfg 保留实验实际配置，供日志和覆盖使用。
     def __init__(self, cfg_path: str, **kwargs) -> None:
         super().__init__()
 
@@ -137,6 +139,8 @@ class YAMLConfig(BaseConfig):
 
     @property
     def evaluator(self, ):
+        # OBB 实验使用 DotaEvaluator，名称不代表只能评估 DOTA 数据集。
+        # 它通过 dataset.CLASSES/get_ann_info 同样评估 ATR-UMOD 和 DroneVehicle。
         if self._evaluator is None and 'evaluator' in self.yaml_cfg:
             if self.yaml_cfg['evaluator']['type'] == 'CocoEvaluator':
                 from ..data import get_coco_api_from_dataset
@@ -175,6 +179,8 @@ class YAMLConfig(BaseConfig):
 
         assert isinstance(cfg['params'], list), ''
 
+        # 正则匹配 model.named_parameters() 的完整名称；未命中参数进入默认组。
+        # 分组应互斥，新增融合块后需要核查其实际学习率和 weight_decay。
         param_groups = []
         visited = []
         for pg in cfg['params']:
@@ -206,6 +212,7 @@ class YAMLConfig(BaseConfig):
             and not ('total_batch_size' in cfg and 'batch_size' in cfg), \
                 '`batch_size` or `total_batch_size` should be choosed one'
 
+        # total_batch_size 是全局 batch，必须能被 world_size 整除；单进程不分摊。
         total_batch_size = cfg.get('total_batch_size', None)
         if total_batch_size is None:
             bs = cfg.get('batch_size')

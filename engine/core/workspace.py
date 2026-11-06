@@ -12,6 +12,10 @@ from typing import Any, Dict, Optional, List
 
 GLOBAL_CONFIG = defaultdict(dict)
 
+# 注册表保存构造函数的参数模式，而不是立即实例化每个网络。
+# __share__ 从顶层配置共享 num_classes 等值；__inject__ 递归创建子组件。
+# 因此新增模块除了 @register()，还必须被相应 __init__.py 导入。
+
 
 def register(dct :Any=GLOBAL_CONFIG, name=None, force=False):
     """
@@ -62,6 +66,7 @@ def extract_schema(module: type):
     Return:
         Dict,
     """
+    # 记录位置参数及默认值，供 YAML 中的 type/name 与 Python 类建立映射。
     argspec = inspect.getfullargspec(module.__init__)
     arg_names = [arg for arg in argspec.args if arg != 'self']
     num_defualts = len(argspec.defaults) if argspec.defaults is not None else 0
@@ -107,6 +112,7 @@ def create(type_or_name, global_cfg=GLOBAL_CONFIG, **kwargs):
 
     cfg = global_cfg[name]
 
+    # 支持 optimizer: {type: AdamW, ...} 等别名；先恢复构造函数默认值再覆盖。
     if isinstance(cfg, dict) and 'type' in cfg:
         _cfg: dict = global_cfg[cfg['type']]
         # clean args
@@ -124,6 +130,7 @@ def create(type_or_name, global_cfg=GLOBAL_CONFIG, **kwargs):
     module_kwargs = {}
     module_kwargs.update(cfg)
 
+    # 顶层共享字段优先于组件同名字段，避免数据集、预测头和损失的类别数不一致。
     # shared var
     for k in cfg['_share']:
         if k in global_cfg:

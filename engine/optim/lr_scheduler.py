@@ -8,6 +8,8 @@ from functools import partial
 
 
 def flat_cosine_schedule(total_iter, warmup_iter, flat_iter, no_aug_iter, current_iter, init_lr, min_lr):
+    # warmup 为平方爬升，flat 保持初始 lr，cosine 降至 min_lr，最后可固定。
+    # warmup_iter/flat_iter/total_iter 需要一致且分母非零；它不负责关闭数据增强。
     """
     Computes the learning rate using a warm-up, flat, and cosine decay schedule.
 
@@ -50,6 +52,7 @@ class FlatCosineLRScheduler:
     """
     def __init__(self, optimizer, lr_gamma, iter_per_epoch, total_epochs,
                  warmup_iter, flat_epochs, no_aug_epochs, scheduler_type="cosine"):
+        # initial_lr 来自已构建的 PyTorch scheduler；按组保留不同主干/检测头 lr。
         self.base_lrs = [group["initial_lr"] for group in optimizer.param_groups]
         self.min_lrs = [base_lr * lr_gamma for base_lr in self.base_lrs]
 

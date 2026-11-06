@@ -29,6 +29,9 @@ class ATRUMODPairDataset(DetDataset):
 
     __inject__ = ["transforms"]
 
+    # 本数据集用 IR 标注作为几何基准；进入模型前必须通过成对算子转为 Tensor。
+    # target['boxes'] 初始为像素 cx/cy/w/h + angle/pi，不是全五维像素或弧度。
+
     # 经 data_pre/inspect_atrumod.py 全量验证确认的 11 类严格字符串
     CLASSES: Tuple[str, ...] = (
         "car",
@@ -166,6 +169,8 @@ class ATRUMODPairDataset(DetDataset):
         illum_id = int(np.clip(int(root.findtext("illumination", default="1")), 0, 6))
         loc_id = int(np.clip(int(root.findtext("location", default="0")), 0, 10))
 
+        # 六组图像级监督：三组连续量（时间为二维）和三组离散类别。
+        # 缺字段时使用默认值/clip，没有缺失掩码；这些替代值仍会参与 loss_cond。
         conditions = {
             "height": torch.tensor([height_norm], dtype=torch.float32),
             "angle": torch.tensor([angle_norm], dtype=torch.float32),
@@ -195,6 +200,7 @@ class ATRUMODPairDataset(DetDataset):
                 cy = float(robndbox.findtext("cy", "0"))
                 w_box = float(robndbox.findtext("w", "0"))
                 h_box = float(robndbox.findtext("h", "0"))
+                # 当前把 XML angle 当作度；使用新数据版本前需以可视化核验单位。
                 angle_deg = float(robndbox.findtext("angle", "0"))
 
                 if w_box <= 1.0 or h_box <= 1.0:
@@ -258,6 +264,7 @@ class ATRUMODPairDataset(DetDataset):
         img_ir: Image.Image = Image.open(ir_path).convert("RGB")
         img_rgb: Image.Image = Image.open(rgb_path).convert("RGB")
 
+        # 同尺寸只是张量契约，并不证明两传感器已经几何配准。
         if img_ir.size != img_rgb.size:
             img_rgb = img_rgb.resize(img_ir.size, Image.BILINEAR)
 
@@ -269,6 +276,8 @@ class ATRUMODPairDataset(DetDataset):
         return {"ir": img_ir, "rgb": img_rgb}, target
 
     def __getitem__(self, idx: int):
+        # 训练可容错重采样，但验证集出错后换样会改变覆盖范围和 image_id 分布。
+        # 科研评估应先离线检查全部配对/标注，不能把容错成功当作数据完整。
         for attempt in range(self.max_retry):
             try:
                 paired_imgs, target = self._load_single_pair(idx)
@@ -285,6 +294,7 @@ class ATRUMODPairDataset(DetDataset):
         return self._load_single_pair(idx)
 
     def get_ann_info(self, idx: int) -> Dict[str, Any]:
+        # 本地评估直接读取未增强 GT，不能把训练中的归一化框再次当作像素框。
         file_id: str = self.img_ids[idx]
         xml_path = os.path.join(self.ann_folder, f"{file_id}.xml")
         target = self._parse_xml(xml_path, orig_w=640, orig_h=512)

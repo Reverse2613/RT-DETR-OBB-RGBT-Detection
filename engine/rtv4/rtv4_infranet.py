@@ -17,6 +17,9 @@ __all__ = ['RTv4_Infranet', ]
 class RTv4_Infranet(nn.Module):
     __inject__ = ['backbone', 'encoder', 'decoder', ]
 
+    # InfraNet 训练要处理 backbone 的字典输出，不能直接换进普通 RTv4 容器。
+    # 两路共享同一 encoder/decoder 参数，但实际执行两次前向，训练代价增加。
+
     def __init__(
         self,
         backbone: nn.Module,
@@ -72,6 +75,8 @@ class RTv4_Infranet(nn.Module):
             # (2) 辅助融合分支前向 (Aux Stream: A3, A4, A5 -> Aux Loss)
             # 复用同一个 encoder 和同一个 decoder (参数共享，强化特征流形对齐)
             # ------------------------------------------------------------------
+            # 参数共享不等于独立统计：encoder 内的 BN running stats 也被两路
+            # 依次更新。比较 IR 与融合推理时需关注统计分布，而非只看参数量。
             enc_out_aux = self.encoder(feats_aux)
             if isinstance(enc_out_aux, tuple) and len(enc_out_aux) == 2:
                 fpn_aux, _ = enc_out_aux
@@ -83,6 +88,8 @@ class RTv4_Infranet(nn.Module):
             # ------------------------------------------------------------------
             # (3) 结果打包: 将 dec_main 作为主干，挂载 aux_infranet 与质量监控
             # ------------------------------------------------------------------
+            # aux_infranet 是完整第二条检测分支，别与 decoder 的 aux_outputs
+            # （同一路径的中间层预测）混淆；criterion 会分别匹配并计算损失。
             dec_out_main["aux_infranet"] = dec_out_aux
             dec_out_main["quality_scores"] = quality_scores
 

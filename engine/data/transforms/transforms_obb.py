@@ -45,6 +45,8 @@ def obb2poly(obbs):
     Convert OBBs (cx, cy, w, h, angle_norm) to polygon (4, 2)
     angle_norm in [0, 1] -> [0, 180] degrees
     """
+    # 此工具用于 CPU 数据增强；前四维必须处于同一个像素坐标系。
+    # 各轴分别归一化后的五元组不能在矩形图上直接当作欧氏旋转框。
     if isinstance(obbs, torch.Tensor):
         obbs = obbs.cpu().numpy()
 
@@ -545,6 +547,8 @@ class RandomAffineOBB(Transform):
 
 @register()
 class ResizeOBB(T.Resize):
+    # 等比缩放保持角度；非等比缩放先变换四角，再拟合最小外接矩形。
+    # 后者是对变形四边形的矩形近似，不等于严格保角；右/下 padding 不平移中心。
     def __init__(
         self,
         size,
@@ -629,6 +633,7 @@ class ResizeOBB(T.Resize):
 
 @register()
 class SanitizeBoundingBoxesOBB(Transform):
+    # 检查数值、边长、中心范围、角度并过滤 labels；不是多边形精确裁剪器。
     def __init__(self, min_size: float = 1.0) -> None:
         super().__init__()
         self.min_size = float(min_size)
@@ -693,6 +698,8 @@ class SanitizeBoundingBoxesOBB(Transform):
 
 @register()
 class ConvertOBB(Transform):
+    # 训练标签契约：(cx/W, cy/H, w/W, h/H, angle/pi)。
+    # angle 早已在加载器归一化，这里只除前四维；切勿再次除 180 或 pi。
     def __init__(self, normalize=False) -> None:
         super().__init__()
         self.normalize = normalize

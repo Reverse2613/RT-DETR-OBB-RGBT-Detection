@@ -36,6 +36,8 @@ def remove_module_prefix(state_dict):
 
 
 class BaseSolver(object):
+    # 管理设备、DDP、EMA、数据迭代器和 checkpoint 的共同生命周期。
+    # 检测任务的 epoch 循环由 DetSolver 实现，本类不定义检测算法。
     def __init__(self, cfg: BaseConfig) -> None:
         self.cfg = cfg
         self.obj365_ids = [
@@ -53,6 +55,7 @@ class BaseSolver(object):
         else:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+        # 先构建原始模型并加载 tuning，再包装 DDP 和构建 EMA，保持初始权重一致。
         self.model = cfg.model
 
         # Setup teacher model
@@ -164,6 +167,8 @@ class BaseSolver(object):
                     print(f'Not load {k}.state_dict')
 
     def load_resume_state(self, path: str):
+        # resume 恢复 last_epoch 及已构建对象的状态，要求模型结构与原实验兼容。
+        # torch.load/远程权重只能用于可信文件；不可信 pickle 不是安全数据格式。
         """Load resume"""
         path = str(path)
         if path.startswith('http'):
@@ -186,6 +191,8 @@ class BaseSolver(object):
         self.load_state_dict(state)
 
     def load_tuning_state(self, path: str):
+        # tuning 优先读取 checkpoint 的 EMA 权重，只迁移匹配的参数。
+        # 跨类别映射的历史逻辑针对 COCO/Objects365，不能当作 ATR 类别语义映射。
         """Load model for tuning and adjust mismatched head parameters"""
         if path.startswith('http'):
             state = torch.hub.load_state_dict_from_url(path, map_location='cpu')

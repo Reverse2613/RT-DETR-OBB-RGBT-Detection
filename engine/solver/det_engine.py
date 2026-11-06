@@ -26,6 +26,8 @@ from ..misc.vis_obb import visualize_obb_training
 
 def _to_device(item, device):
     r"""防御性递归搬运：支持张量、嵌套字典和列表安全转移至 GPU."""
+    # conditions 是嵌套字典，仅对顶层 target 调 .to() 无法搬运其中的张量。
+    # 此函数递归处理容器；当前实现把 tuple 也返回为 list。
     if hasattr(item, "to"):
         return item.to(device)
     elif isinstance(item, dict):
@@ -57,6 +59,8 @@ def _compute_encoder_transformer_grad_percentage(model: torch.nn.Module) -> floa
 def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0, **kwargs):
+    # samples 为 [B,6,H,W]；targets 是逐图字典列表，检测框已归一化。
+    # teacher 分支默认未配置，OBB criterion 也没有接入 distill 损失映射。
     model.train()
     criterion.train()
     metric_logger = MetricLogger(delimiter="  ")
@@ -88,6 +92,8 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
             with torch.no_grad():
                 teacher_encoder_output_for_distillation = teacher_model(samples).detach()
 
+        # AMP 只包裹模型前向，损失在关闭 autocast 的上下文计算。
+        # device_type 使用 str(device)：cuda:0 等带索引写法有兼容风险。
         if scaler is not None:
             with torch.autocast(device_type=str(device), cache_enabled=True):
                 outputs = model(samples, targets=targets,
@@ -149,6 +155,7 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
             optimizer.step()
 
+        # 每个优化步骤后更新 EMA，然后更新学习率；日志使用跨 rank 归约损失。
         # ema
         if ema is not None:
             ema.update(model)
@@ -184,6 +191,8 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
 @torch.no_grad()
 def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, data_loader, coco_evaluator: CocoEvaluator, device, output_dir=None, current_epoch=None):
+    # 名称 coco_evaluator 是历史接口，实际可传 DotaEvaluator/HRSCEvaluator。
+    # 评估不计算 criterion 的损失；先还原框坐标，再按 image_id 汇总预测。
     model.eval()
     criterion.eval()
     coco_evaluator.cleanup()

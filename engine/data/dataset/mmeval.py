@@ -685,6 +685,8 @@ def warmup_numba():
 
 
 def rbox_iou(boxes1, boxes2, use_torch_sat=False):
+    # 指标几何使用像素坐标与弧度角。AABB/SAT 只排除不相交候选，
+    # 真正交并比来自旋转四边形交面积，不是 KLD 或水平框 IoU 的替代。
     """Compute pairwise IoU between two sets of rotated boxes.
     Uses numba acceleration (with embedded SAT early-exit) if available,
     otherwise pure Python.
@@ -1041,6 +1043,8 @@ def _tpfp_default(det_bboxes, det_scores, gt_bboxes, gt_bboxes_ignore, iou_thr):
 # ============================================================
 
 def _compute_cls_ap(args):
+    # 先按图匹配 TP/FP，再把该类全数据集预测按分数排序累计 PR。
+    # 无 GT 的类返回 NaN，最后不纳入均值；有 GT 但无预测的类 AP=0。
     """Compute AP for a single class (picklable for multiprocessing)."""
     cls_idx, class_dets_cls, class_gts_cls, class_gts_ignore_cls, iou_thr, use_07_metric, num_images = args
     warmup_numba()
@@ -1134,6 +1138,8 @@ def eval_rbbox_map(dets, gts, scale_ranges=None, iou_thr=0.5,
                Default 4 enables numba+mp4 when numba is available.
         use_torch_sat: if True and GPU available, use PyTorch SAT pre-filter
     """
+    # 当前 scale_ranges 未参与后续统计，不能仅设置此参数就声称已报告 AP_small。
+    # 空数据集也需调用方预检查，下面会读取 dets[0]。
     assert len(dets) == len(gts), f"Length mismatch: dets {len(dets)} vs gts {len(gts)}"
 
     num_classes = len(dets[0])

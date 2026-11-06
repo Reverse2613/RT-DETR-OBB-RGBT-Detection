@@ -19,6 +19,10 @@ ones_ = nn.init.ones_
 
 __all__ = ['HGNetv2']
 
+# 单路特征提取器，所有 IR/RGB 双流实验均在外层组合它，而不改其内部算子。
+# B0 的四个 stage 输出通道为 64/256/512/1024、步长为 4/8/16/32。
+# return_idx=[1,2,3] 选后三层；use_lab 指可学习仿射，不是 Lab 色彩空间。
+
 
 class LearnableAffineBlock(nn.Module):
     def __init__(
@@ -195,6 +199,8 @@ class EseModule(nn.Module):
 
 
 class HG_Block(nn.Module):
+    # 串联卷积的中间结果与原输入沿通道拼接，再聚合到 out_chs。
+    # 只有同尺度后续 block 启用 residual，stage 首块承担通道变化。
     def __init__(
             self,
             in_chs,
@@ -467,6 +473,8 @@ class HGNetv2(nn.Module):
                     kernel_size,
                     use_lab))
 
+        # freeze_stem_only 默认 True；freeze_at>=0 不一定冻结 stage。
+        # 当前六个 ATR 主配置使用 freeze_at=-1、freeze_norm=False，主干可训练。
         if freeze_at >= 0:
             self._freeze_parameters(self.stem)
             if not freeze_stem_only:
@@ -476,6 +484,9 @@ class HGNetv2(nn.Module):
         if freeze_norm:
             self._freeze_norm(self)
 
+        # 优先读取本地 stage1 权重，路径用字符串拼接，目录需保留末尾斜杠。
+        # 下载/异常分支直接使用 distributed.get_rank/barrier，普通单进程下
+        # 缺失本地权重可能报进程组未初始化；离线实验应准备文件或关闭预训练。
         if pretrained:
             RED, GREEN, RESET = "\033[91m", "\033[92m", "\033[0m"
             try:
@@ -524,6 +535,7 @@ class HGNetv2(nn.Module):
 
     def forward(self, x):
         x = self.stem(x)
+        # 返回的是 NCHW 特征列表，不是分类 logits，也不在此处做模态融合。
         outs = []
         for idx, stage in enumerate(self.stages):
             x = stage(x)

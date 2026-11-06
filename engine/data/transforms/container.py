@@ -22,6 +22,8 @@ import random
 
 @register()
 class Compose(T.Compose):
+    # 每个算子接收并返回 (image_or_pair,target,dataset)，dataset 供 Mosaic 抽样。
+    # stop_epoch 的三阈值策略切换 NoAug/Mosaic/其他增强，而不是改变模型结构。
     def __init__(self, ops, policy=None, mosaic_prob=-0.1) -> None:
         transforms = []
         if ops is not None:
@@ -51,6 +53,8 @@ class Compose(T.Compose):
                 print("     ### Mosaic with Prob.@{} and ZoomOut/IoUCrop existed ### ".format(self.mosaic_prob))
             print("     ### ImgTransforms Epochs: {} ### ".format(policy['epoch']))
             print('     ### Policy_ops@{} ###'.format(policy['ops']))
+        # 显式 policy 即使 name=default，上方也会读取 epoch/ops 用于打印。
+        # 现有主 YAML 通过深合并继承这两个键；独立构建时仅给 name 会 KeyError。
         self.global_samples = 0
         self.policy = policy
 

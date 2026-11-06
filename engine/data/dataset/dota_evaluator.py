@@ -40,6 +40,8 @@ def rbox2qbox(rbox):
 
 @register()
 class DotaEvaluator(object):
+    # 通用本地 OBB AP 评估器，以 dataset.CLASSES 决定类别。
+    # 默认只算 IoU=0.5、VOC2007 十一点 AP；并非 COCO 的 AP50:95。
     def __init__(self, dataset, iou_types=None, iou_thrs=None):
         self.dataset = dataset
         self.iou_types = iou_types or ['mAP']
@@ -125,6 +127,8 @@ class DotaEvaluator(object):
         return np.asarray(value)
 
     def summarize(self):
+        # 预测前四维为原图像素、角度为弧度；GT 仅角度由 [0,1) 转成弧度。
+        # 与 loss 的 Hungarian 匹配不同，AP 使用按分数排序的 IoU 贪心匹配。
         print("Evaluating DOTA metrics...")
 
         print(f"Collected predictions for {len(self.predictions)} images.")
@@ -180,6 +184,8 @@ class DotaEvaluator(object):
 
         per_iou_ap = OrderedDict()
         per_iou_results = OrderedDict()
+        # AP50_95 名称只有在传入 0.50:0.05:0.95 的完整阈值集时才成立。
+        # 多阈值分支还要求含 0.50 和 0.75；单阈值统计键仍叫 mAP。
         multi_iou = len(self.iou_thrs) > 1
 
         for iou_thr in self.iou_thrs:

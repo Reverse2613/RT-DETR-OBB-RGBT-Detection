@@ -54,6 +54,8 @@ class DualHGNetv2_Add(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+        # 两个主干参数独立，不共享权重；输出必须具有相同尺度和通道才能相加。
+        # 三通道复制只是接口兼容，不能把复制图像的输出当成真实双模态评估。
         # 兼容算力分析工具传入的 3 通道 Dummy Tensor
         if x.shape[1] == 3:
             x = torch.cat([x, x], dim=1)
@@ -66,6 +68,8 @@ class DualHGNetv2_Add(nn.Module):
         feats_rgb: List[torch.Tensor] = self.backbone_rgb(x_rgb)
 
         # 逐阶段执行纯粹的代数相加
+        # 此基线没有额外融合参数，也没有显式空间对齐/质量估计机制。
+        # 下游编码器仍有非线性，不能仅凭这里的相加断言整网表达能力高低。
         fused_features: List[torch.Tensor] = [
             f_ir + f_rgb for f_ir, f_rgb in zip(feats_ir, feats_rgb)
         ]

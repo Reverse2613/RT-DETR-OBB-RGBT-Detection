@@ -28,6 +28,9 @@ except ImportError:
 
 class DetSolver(BaseSolver):
 
+    # 实验外层：建训练环境 -> 每轮训练 -> EMA 模型评估 -> 存权重/日志。
+    # 当前 ATR 配置 stop_epoch=epoches=36，循环范围 0..35，不进入第二阶段。
+
     def fit(self, ):
         self.train()
         args = self.cfg
@@ -96,6 +99,8 @@ class DetSolver(BaseSolver):
                 model_to_check.decoder.logging_matcher.vis_output_dir = str(vis_match_dir)
 
         self.self_lr_scheduler = False
+        # 配置字段保留原拼写 lrsheduler；非 None 时选择逐 iteration FlatCosine。
+        # 这时 YAML 中的 MultiStepLR 不是实际控制学习率的主调度器。
         if args.lrsheduler is not None:
             iter_per_epoch = len(self.train_dataloader)
             print("     ## Using Self-defined Scheduler-{} ## ".format(args.lrsheduler))
@@ -109,6 +114,7 @@ class DetSolver(BaseSolver):
         best_stat = {'epoch': -1, }
         # evaluate again before resume training
         if self.last_epoch > 0:
+            # 开启 EMA 后，记录的指标来自平滑权重而非训练中的即时权重。
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
                 module,
@@ -245,6 +251,8 @@ class DetSolver(BaseSolver):
                 current_epoch=epoch,
             )
 
+            # 单 mAP 指标时按该值选最优；多指标共享 top1，不能直接假设
+            # best_stg1.pth 一定按 AP50_95 选择，应另行核对选模协议。
             # TODO
             for k in test_stats:
                 stat_value = test_stats[k]

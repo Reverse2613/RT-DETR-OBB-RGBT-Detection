@@ -13,6 +13,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 
 import argparse
 
+# 项目入口只负责编排：CLI -> YAMLConfig -> TASKS 中的 Solver。
+# 网络、数据和损失由注册器按配置延迟构建；真正的批次训练在 det_engine.py。
+
 try:
     from dota_auto_eval import DOTAEvaluator
 except ImportError:
@@ -40,12 +43,16 @@ def main(args, ) -> None:
         'Only support from_scrach or resume or tuning at one time'
 
 
+    # -u 支持点分路径覆盖；随后非 None 的 argparse 值再次覆盖同名配置。
+    # 特别注意 --use-amp 的默认值 False 也会覆盖 YAML 中的 use_amp: True。
     update_dict = yaml_utils.parse_cli(args.update)
     update_dict.update({k: v for k, v in args.__dict__.items() \
         if k not in ['update', ] and v is not None})
 
     cfg = YAMLConfig(args.config, **update_dict)
 
+    # 恢复训练加载完整状态，tuning 只按名称和形状迁移模型权重。
+    # 此处只关闭下列两类预训练开关，其他双流主干仍需显式覆盖 pretrained。
     if args.resume or args.tuning:
         if 'HGNetv2' in cfg.yaml_cfg:
             cfg.yaml_cfg['HGNetv2']['pretrained'] = False
@@ -127,6 +134,7 @@ def main(args, ) -> None:
                 except Exception as e:
                     print(f"恢复训练任务失败: {e}")
 
+    # 当前实验 task=detection，选择 DetSolver；test-only 不执行优化步骤。
     solver = TASKS[cfg.yaml_cfg['task']](cfg)
 
     if args.test_only:

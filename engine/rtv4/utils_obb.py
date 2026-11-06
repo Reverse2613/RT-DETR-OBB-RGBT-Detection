@@ -26,6 +26,10 @@ def xy_wh_r_2_xy_sigma(xywhr):
         sigma (torch.Tensor): covariance matrix of 2-D Gaussian distribution
             with shape (N, 2, 2).
     """
+    # 高斯均值为中心，协方差 R diag((w/2)^2,(h/2)^2) R^T。
+    # theta 此函数要求弧度，外层 kld_loss 负责由归一化角换算。
+    # 矩形图上先分别缩放 w/h 再构造 R 的协方差，不等于对像素协方差
+    # 作 D^-1 Sigma D^-T；必须统一度量后再讨论仿射不变性。
     _shape = xywhr.shape
     assert _shape[-1] == 5
     xy = xywhr[..., :2]
@@ -67,6 +71,9 @@ def postprocess(distance, fun='log1p', tau=1.0):
 
 
 def kld_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True):
+    # 计算方向为 KL(target || pred)，包括中心位移、协方差迹及 log-det 项。
+    # 运算转 FP32 并加 epsilon 稳定求逆；这不是精确 rotated IoU。
+    # 长边方向 theta 与 theta+pi 的协方差相同，但另加的标量 L1 不具此周期性。
     pred = pred.float()
     target = target.float()
 
@@ -162,6 +169,8 @@ def box2corners_th(box):
     return rotated.reshape(shape[:-1] + (4, 2))
 
 def hausdorff_loss(pred, target):
+    # 比较的是各自四个角点集合的双向最大最近邻距离，不是连续矩形边界距离。
+    # 输出 [N,M] 匹配代价矩阵；角点旋转也要求两个坐标轴使用一致欧氏度量。
     """
     pred: (N, 5) (cx, cy, w, h, angle_norm)
     target: (M, 5) (cx, cy, w, h, angle_norm)

@@ -45,6 +45,8 @@ class SingleHGNetv2_IR(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
+        # 公平对照仍可共用六通道 DataLoader，但网络只计算 IR 路径。
+        # 这不等于当前数据加载器免读 RGB；真正单传感器部署需另备 IR 输入。
         # 严格防御性切片：只提取红外 3 通道
         if x.shape[1] == 6:
             x_ir = x[:, :3, :, :]

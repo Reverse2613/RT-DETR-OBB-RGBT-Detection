@@ -20,6 +20,10 @@ __all__ = [
 
 INCLUDE_KEY = '__include__'
 
+# 配置按 __include__ 的列出顺序递归合并，最后由当前文件覆盖。
+# 字典逐键合并，列表整体替换；只写 policy.name 不会删除继承的 epoch/ops。
+# 文件读取使用 yaml.Loader，应仅加载可信配置；本次说明不改变加载行为。
+
 
 def load_config(file_path, cfg=dict()):
     """load config
@@ -78,6 +82,7 @@ def parse_cli(nargs: List[str]) -> Dict:
     parse command-line arguments
         convert `a.c=3 b=10` to `{'a': {'c': 3}, 'b': 10}`
     """
+    # 如 train_dataloader.total_batch_size=4 会变为嵌套字典，而不是字符串键。
     cfg = {}
     if nargs is None or len(nargs) == 0:
         return cfg

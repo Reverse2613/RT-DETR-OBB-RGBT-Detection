@@ -318,6 +318,10 @@ class TransformerEncoder(nn.Module):
 class HybridEncoder(nn.Module):
     __share__ = ['eval_spatial_size', ]
 
+    # 先用 1x1 将各层统一到 hidden_dim，再在指定层做 AIFI 自注意力。
+    # 当前 use_encoder_idx=[2] 只编码 S5；之后用 FPN/PAN 交换跨尺度信息。
+    # 该组件看不到分离的 IR/RGB 流，跨模态融合已经在 backbone 内完成。
+
     def __init__(self,
                  in_channels=[512, 1024, 2048],
                  feat_strides=[8, 16, 32],
@@ -377,6 +381,7 @@ class HybridEncoder(nn.Module):
 
         # feature_projector
         self.feature_projector = None
+        # 此投影只为教师蒸馏构建；普通 OBB 配置为 0，不额外返回学生蒸馏特征。
         if self.distill_teacher_dim > 0:
             self.feature_projector = nn.Sequential(
                     nn.Linear(hidden_dim, self.distill_teacher_dim),
@@ -423,6 +428,9 @@ class HybridEncoder(nn.Module):
     def build_2d_sincos_position_embedding(w, h, embed_dim=256, temperature=10000.):
         """
         """
+        # 审查注意：此处网格展平顺序为先 W 后 H，而 forward 的特征 flatten
+        # 按 H,W 行优先（W 最快变化）。序列长度相同不代表位置逐项对应；
+        # README 给出非方形反例。本次只加说明，没有调整位置编码实现。
         grid_w = torch.arange(int(w), dtype=torch.float32)
         grid_h = torch.arange(int(h), dtype=torch.float32)
         grid_w, grid_h = torch.meshgrid(grid_w, grid_h, indexing='ij')
@@ -466,6 +474,8 @@ class HybridEncoder(nn.Module):
 
 
         # broadcasting and fusion
+        # 自顶向下 FPN 融合高层语义与低层细节，再用 PAN 自底向上聚合。
+        # 插值固定倍率 2，当前实验 H/W 均为 32 的倍数，三层尺寸可准确对应。
         inner_outs = [proj_feats[-1]]
         for idx in range(len(self.in_channels) - 1, 0, -1):
             feat_heigh = inner_outs[0]

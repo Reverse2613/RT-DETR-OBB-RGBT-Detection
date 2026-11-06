@@ -21,6 +21,9 @@ from ..core import register
 
 __all__ = ['RTDETRTransformerv2OBB']
 
+# OBB 预测贯穿全文的五元组：(cx/W,cy/H,w/W,h/H,theta/pi)。
+# 注意旋转必须在同度量坐标系中解释：矩形画布的 x/y 归一化尺度不同。
+
 
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers, act='relu'):
@@ -141,6 +144,8 @@ class MSDeformableAttention(nn.Module):
         attention_weights = self.attention_weights(query).reshape(bs, Len_q, self.num_heads, sum(self.num_points_list))
         attention_weights = F.softmax(attention_weights, dim=-1).reshape(bs, Len_q, self.num_heads, sum(self.num_points_list))
 
+        # 当前实际参考框最后一维为 5，不是上方历史 docstring 中的 2。
+        # 每层参考框按采样点数重复，与所有尺度拼接后的 offsets 顺序保持一致。
         reference_points = reference_points.expand(-1, -1, self.num_levels, -1)
 
         ref_expanded = []
@@ -168,6 +173,10 @@ class MSDeformableAttention(nn.Module):
         # 2. 在局部坐标系下，根据当前候选框的长和宽 (w, h) 缩放无量纲采样偏移
         wh = (ref_expanded[..., 2:4] * self.offset_scale).expand(-1, -1, self.num_heads, -1, -1)
         # 局部真实偏移向量 p_local = (δ_x * w * scale, δ_y * h * scale)
+        # 先按局部宽高缩放再旋转，避免把长短边缩放误当作全局轴缩放。
+        # 但这里 wh 已分别除 W/H；W!=H 时仍应核查度量修正：
+        # 正确归一化偏移为 D^-1 R(theta) D local_offsets，D=diag(W,H)。
+        # 当前代码直接用 R，不含交叉项的 H/W、W/H；README 详述此风险。
         local_offsets = sampling_offsets * num_points_scale * wh
 
         # 3. 严格执行二维几何刚体旋转: p_image = R(θ) @ p_local
@@ -262,6 +271,8 @@ class TransformerDecoderLayer(nn.Module):
 
 
 class TransformerDecoderOBB(nn.Module):
+    # 每层经过 query 自注意力、旋转可变形交叉注意力和 FFN 后，
+    # 在 inverse-sigmoid 空间预测五维增量，再 sigmoid 得到下一层参考框。
     def __init__(self, hidden_dim, decoder_layer, num_layers, eval_idx=-1):
         super(TransformerDecoderOBB, self).__init__()
         self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for _ in range(num_layers)])
@@ -309,6 +320,8 @@ class TransformerDecoderOBB(nn.Module):
                 break
 
             ref_points = inter_ref_bbox
+            # 下一层采样参考框停止梯度，训练输出仍保留用于辅助回归的路径。
+            # train 保存各层；eval 只执行到 eval_idx（默认最后一层）。
             ref_points_detach = inter_ref_bbox.detach()
 
         return torch.stack(dec_out_bboxes), torch.stack(dec_out_logits)
@@ -317,6 +330,10 @@ class TransformerDecoderOBB(nn.Module):
 @register()
 class RTDETRTransformerv2OBB(nn.Module):
     __share__ = ['num_classes', 'eval_spatial_size']
+
+    # 对三尺度特征投影/展平，预测 encoder 候选，再用 top-k 选普通 queries。
+    # 默认实验 hidden_dim=224、8 heads、3 decoder 层、300 普通 queries。
+    # denoising queries 只在训练拼到前面，最终普通预测不会包含它们。
 
     def __init__(self,
                  num_classes=80,
@@ -548,6 +565,8 @@ class RTDETRTransformerv2OBB(nn.Module):
         enc_outputs_logits :torch.Tensor = self.enc_score_head(output_memory)
 
         # Expand anchors to 5 dim: (cx, cy, w, h, angle)
+        # 第五维在这里是角度 logit，补零经 sigmoid 后为 0.5，即 90 度，
+        # 并非零度锚框；初始 bbox head 末层权重/偏置也为零。
         anchors_5d = torch.cat([anchors, torch.zeros_like(anchors[..., :1])], dim=-1)
         enc_outputs_coord_unact :torch.Tensor = self.enc_bbox_head(output_memory) + anchors_5d
         enc_outputs_coord_unact = torch.clamp(enc_outputs_coord_unact, min=-20.0, max=20.0)
@@ -561,6 +580,8 @@ class RTDETRTransformerv2OBB(nn.Module):
             enc_topk_bboxes_list.append(enc_topk_bboxes)
             enc_topk_logits_list.append(enc_topk_logits)
 
+        # learn_query_content=False 时使用 encoder top-k 特征的 detach 副本；
+        # encoder 仍通过 enc_aux_outputs 的独立监督学习候选分类与定位。
         if self.learn_query_content:
             content = self.tgt_embed.weight.unsqueeze(0).expand(memory.shape[0], -1, -1)
         else:
@@ -637,6 +658,8 @@ class RTDETRTransformerv2OBB(nn.Module):
             dn_out_bboxes, out_bboxes = torch.split(out_bboxes, dn_meta['dn_num_split'], dim=2)
             dn_out_logits, out_logits = torch.split(out_logits, dn_meta['dn_num_split'], dim=2)
 
+        # 推理结果形状：[B,Q,K] 分类 logits、[B,Q,5] 归一化旋转框。
+        # 训练另外附加中间层、encoder 候选与 DN 输出，供 criterion 分项监督。
         out = {'pred_logits': out_logits[-1], 'pred_boxes': out_bboxes[-1]}
 
         if self.training and self.aux_loss:
